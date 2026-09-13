@@ -1,29 +1,21 @@
 """
-rag.py — Retrieval-Augmented Generation logic.
+rag.py - Retrieval-Augmented Generation logic.
 
-Loads the persisted Chroma vector store, retrieves the most relevant
-chunks for a user question, and asks Google Gemini to answer using only
-the retrieved context.
-
-Usage (from other modules):
-    from rag import ask_question
-    result = ask_question("What is the submission deadline?")
-    print(result["answer"])
-    print(result["sources"])
+Loads the persisted Chroma vector store, retrieves relevant
+tender/RFP chunks, and asks Gemini to answer using the
+retrieved context.
 """
 
 import os
 import sys
 
-# pyrefly: ignore [missing-import]
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-# pyrefly: ignore [missing-import]
-from langchain_community.vectorstores import Chroma
-# pyrefly: ignore [missing-import]
+from langchain_google_genai import (
+    GoogleGenerativeAIEmbeddings,
+    ChatGoogleGenerativeAI,
+)
+from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
-# pyrefly: ignore [missing-import]
 from langchain_core.output_parsers import StrOutputParser
-# pyrefly: ignore [missing-import]
 from langchain_core.runnables import RunnablePassthrough
 
 from config import (
@@ -33,23 +25,27 @@ from config import (
     CHROMA_DB_DIR,
 )
 
-# Number of chunks to retrieve per question
-RETRIEVER_K = 4
 
-# ── System prompt ────────────────────────────────────────────────
-SYSTEM_PROMPT = """\
+# Number of document chunks to retrieve
+RETRIEVER_K = 10
+
+
+# Prompt used by the LLM
+SYSTEM_PROMPT = """
 You are a Procurement & Tender Analysis Assistant.
 
-Answer the user's question using ONLY the information provided in the retrieved tender/RFP context.
+Answer the user's question using ONLY the information provided
+in the retrieved tender/RFP context.
 
 Do not invent or assume information.
 
-If the answer cannot be found in the provided context, clearly say:
+If the answer cannot be found in the provided context, say:
+
 "I could not find this information in the provided tender documents."
 
-When possible, mention the relevant source document name and page number in your answer.
+When possible, mention the relevant source document and page number.
 
-Context:
+Retrieved context:
 {context}
 
 Question:
@@ -59,12 +55,17 @@ Question:
 
 def get_vector_store():
     """
-    Load the persisted Chroma database.
-    Uses the same embedding model that was used during ingestion.
+    Load the existing Chroma vector database.
     """
+
     if not os.path.exists(CHROMA_DB_DIR):
         print("ERROR: Chroma database not found.")
-        print("Run 'python ingest.py' first to index your tender PDFs.")
+        print("Run 'python ingest.py' first.")
+        sys.exit(1)
+
+    if not GOOGLE_API_KEY:
+        print("ERROR: GOOGLE_API_KEY is missing.")
+        print("Add it to your .env file.")
         sys.exit(1)
 
     embeddings = GoogleGenerativeAIEmbeddings(
@@ -77,42 +78,66 @@ def get_vector_store():
         embedding_function=embeddings,
         collection_name="tender_docs",
     )
+
     return vector_store
 
 
 def get_retriever():
     """
-    Create a similarity-search retriever that returns the top-k
-    most relevant chunks for a given query.
+    Create a similarity-search retriever.
     """
+
     vector_store = get_vector_store()
+
     retriever = vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={"k": RETRIEVER_K},
     )
+
     return retriever
 
 
 def format_docs(docs):
     """
-    Combine retrieved Document objects into a single string
-    that can be inserted into the prompt as context.
+    Convert retrieved documents into text for the LLM prompt.
     """
-    formatted = []
+
+    formatted_docs = []
+
     for doc in docs:
         source = doc.metadata.get("source", "Unknown")
-        page = doc.metadata.get("page", "?")
-        formatted.append(
-            f"[Source: {source} | Page: {int(page) + 1}]\n{doc.page_content}"
+        page = doc.metadata.get("page", 0)
+
+        try:
+            page_number = int(page) + 1
+        except (ValueError, TypeError):
+            page_number = "Unknown"
+
+        formatted_docs.append(
+            f"[Source: {source} | Page: {page_number}]\n"
+            f"{doc.page_content}"
         )
-    return "\n\n---\n\n".join(formatted)
+
+    return "\n\n---\n\n".join(formatted_docs)
 
 
 def build_rag_chain():
     """
-    Wire together: retriever -> prompt -> LLM -> string parser.
-    This is the core RAG chain using LangChain Expression Language (LCEL).
+    Build the basic RAG pipeline:
+
+    Question
+        ↓
+    Retriever
+        ↓
+    Relevant documents
+        ↓
+    Prompt
+        ↓
+    Gemini
+        ↓
+    Answer
     """
+
     retriever = get_retriever()
 
     prompt = ChatPromptTemplate.from_template(SYSTEM_PROMPT)
@@ -120,50 +145,71 @@ def build_rag_chain():
     llm = ChatGoogleGenerativeAI(
         model=GEMINI_CHAT_MODEL,
         google_api_key=GOOGLE_API_KEY,
-        temperature=0,  # deterministic answers for procurement use
+        temperature=0,
     )
 
-    # LCEL chain:
-    #   1. Retrieve docs and pass-through the question
-    #   2. Format docs into context string
-    #   3. Fill prompt template
-    #   4. Send to LLM
-    #   5. Parse output to plain string
     chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
+        {
+            "context": retriever | format_docs,
+            "question": RunnablePassthrough(),
+        }
         | prompt
         | llm
         | StrOutputParser()
     )
+
     return chain, retriever
 
 
 def ask_question(question):
     """
-    End-to-end RAG query.
+    Ask a question using the RAG system.
 
-    Returns a dict with:
-        answer  — the LLM-generated answer
-        sources — list of {"source": filename, "page": page_number} dicts
+    Returns:
+        answer
+        sources
+        retrieved_docs
     """
+
+    if not question or not question.strip():
+        return {
+            "answer": "Please enter a question.",
+            "sources": [],
+            "retrieved_docs": [],
+        }
+
     chain, retriever = build_rag_chain()
 
-    # Retrieve the relevant chunks (we need them for source display)
+    # Retrieve relevant document chunks
     retrieved_docs = retriever.invoke(question)
 
-    # Run the full chain to get the answer
+    # Generate answer using retrieved context
     answer = chain.invoke(question)
 
-    # Collect unique sources for display
+    # Collect unique sources
     sources = []
     seen = set()
+
     for doc in retrieved_docs:
         source = doc.metadata.get("source", "Unknown")
-        page = int(doc.metadata.get("page", 0)) + 1  # 0-indexed -> 1-indexed
-        key = (source, page)
+        page = doc.metadata.get("page", 0)
+
+        try:
+            page_number = int(page) + 1
+        except (ValueError, TypeError):
+            page_number = "Unknown"
+
+        key = (source, page_number)
+
         if key not in seen:
             seen.add(key)
-            sources.append({"source": source, "page": page})
+
+            sources.append(
+                {
+                    "source": source,
+                    "page": page_number,
+                }
+            )
 
     return {
         "answer": answer,

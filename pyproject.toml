@@ -1,0 +1,42 @@
+[project]
+name = "procurement-tender-analysis-assistant"
+version = "0.1.0"
+description = "FastAPI and LangChain RAG application for procurement tender and RFP analysis"
+readme = "README.md"
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "langchain>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-chroma>=0.1.4",
+    "langchain-community>=0.3.0",
+    "pypdf>=5.0.0",
+    "chromadb>=0.5.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.12",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+    "ruff>=0.8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

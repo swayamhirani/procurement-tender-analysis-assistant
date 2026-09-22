@@ -5,18 +5,30 @@
 .venv/
 venv/
 
-# Chroma database (generated at runtime)
+# Vector database & storage (generated at runtime)
 chroma_db/
+storage/chroma/
+storage/
 
-# Python
+# Python & Cache
 __pycache__/
 *.pyc
-*.pyo
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
 
-# IDE
+# Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE & OS
 .vscode/
 .idea/
-
-# OS
 Thumbs.db
 .DS_Store

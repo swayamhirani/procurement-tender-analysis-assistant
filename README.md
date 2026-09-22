@@ -1,196 +1,264 @@
 # Procurement & Tender Analysis Assistant
 
-A simple **Retrieval-Augmented Generation (RAG)** application that helps procurement consultants review real tender/RFP PDF documents and quickly find information such as eligibility criteria, submission deadlines, required qualifications, evaluation criteria, and more.
+## Overview
 
-Built as an MVP for an AI/ML internship project.
+The **Procurement & Tender Analysis Assistant** is a production-grade Retrieval-Augmented Generation (RAG) application designed to assist procurement consultants, bidders, and evaluators in reviewing lengthy, complex government tender and RFP (Request for Proposal) PDF documents (often 50–200+ pages).
 
----
+Instead of manually searching through hundreds of pages, users can upload tender PDFs and query specific operational requirements, financial eligibility thresholds, submission deadlines, and evaluation criteria. Answers are strictly grounded in retrieved document context, preventing hallucinations and providing verifiable citations with document names and page numbers.
 
-## Why RAG?
+## Features
 
-Tender and RFP documents can be very long (50–200+ pages) and contain critical information scattered across different sections. Reading them end-to-end is time-consuming.
-
-**RAG** solves this by:
-
-1. **Indexing** the document into searchable chunks.
-2. **Retrieving** only the most relevant chunks for a given question.
-3. **Generating** a focused answer using only the retrieved context — so the LLM does not hallucinate.
-
----
+- **Automated Document Ingestion & Chunking**: Extracts text from multi-page tender PDFs using `PyPDFLoader` and segments them using `RecursiveCharacterTextSplitter` (1000 characters with 200 character overlap).
+- **Persistent Vector Database**: Embeds document chunks using Google Gemini embeddings (`models/gemini-embedding-001`) with automatic retry and exponential backoff, storing vectors in a local persistent ChromaDB instance (`storage/chroma`).
+- **Strict Grounding & Hallucination Prevention**: Uses Google Gemini (`gemini-3.6-flash`) with a strict procurement prompt ensuring answers rely strictly on retrieved context. If information is not present, it explicitly reports that the information could not be found.
+- **Traceable Evidence & Citations**: Every response returns exact source document names and page numbers alongside full chunk text for complete auditability.
+- **RESTful API Service**: Built on FastAPI with Pydantic v2 schemas, type hints, CORS support, and comprehensive error handling.
+- **Modern Business Frontend**: A responsive, clean React + TypeScript + Vite interface providing dashboard metrics, document upload/indexing, interactive Q&A, and collapsible evidence viewer.
+- **Production Tooling**: Managed with Astral UV for lightning-fast dependency resolution and virtual environments, Ruff for linting and formatting, and Pytest for automated unit testing.
 
 ## Architecture
 
 ```
-Tender/RFP PDF
+Frontend (React + TypeScript + Vite)
+      ↓ HTTP / JSON
+FastAPI REST API (app.main)
       ↓
-PyPDFLoader          ← extracts text page-by-page
+Application & Service Layer (app.services)
       ↓
-Text Splitter        ← splits pages into ~1000-char overlapping chunks
+LangChain RAG Pipeline
       ↓
-Embeddings           ← OpenAI text-embedding-3-small
-      ↓
-ChromaDB             ← persistent local vector database
-      ↓
-Retriever            ← similarity search, top-4 chunks
-      ↓
-LLM                  ← OpenAI gpt-4o-mini
-      ↓
-Answer + Sources     ← grounded answer with page references
+ChromaDB (storage/chroma) + Google Gemini
 ```
-
----
 
 ## Project Structure
 
 ```
 procurement-rag-mvp/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                     # FastAPI application entrypoint & lifecycle
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── routes/
+│   │       ├── __init__.py
+│   │       ├── health.py           # GET /health & /api/health
+│   │       ├── documents.py        # Document upload, listing, and indexing
+│   │       └── query.py            # POST /api/query RAG question answering
+│   ├── core/
+│   │   ├── __init__.py
+│   │   └── config.py               # Pydantic Settings & environment variables
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── schemas.py              # Pydantic v2 request/response models
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── ingestion.py            # PDF loading, splitting, and vector indexing
+│   │   ├── retrieval.py            # ChromaDB connection & similarity retriever
+│   │   └── rag.py                  # LangChain LCEL RAG chain & Gemini prompt
+│   └── utils/
+│       ├── __init__.py
+│       └── logging.py              # Structured application logger
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── DashboardHeader.tsx # Health status badge & metric summary
+│   │   │   ├── DocumentManager.tsx # PDF upload & document indexing UI
+│   │   │   ├── QuerySection.tsx    # Question input & quick example pills
+│   │   │   └── AnswerCard.tsx      # Answer display, citations & evidence inspector
+│   │   ├── services/
+│   │   │   └── api.ts              # Frontend API client layer
+│   │   ├── types/
+│   │   │   └── index.ts            # TypeScript data transfer interfaces
+│   │   ├── App.tsx                 # Main application layout
+│   │   ├── main.tsx                # React DOM render entrypoint
+│   │   └── index.css               # Clean enterprise styling
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── vite.config.ts
 │
 ├── data/
-│   └── tenders/         ← place your PDF files here
-│       └── .gitkeep
+│   └── tenders/                    # Storage directory for uploaded tender PDFs
 │
-├── chroma_db/           ← created automatically by ingest.py
+├── storage/
+│   └── chroma/                     # Persistent Chroma vector database
 │
-├── app.py               ← Streamlit UI
-├── ingest.py            ← document ingestion pipeline
-├── rag.py               ← RAG query logic
-├── config.py            ← configuration (reads .env)
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+├── tests/
+│   ├── __init__.py
+│   ├── test_health.py              # Health check endpoint unit tests
+│   ├── test_documents.py           # Document listing & upload validation tests
+│   └── test_query.py               # Query validation & mocked RAG tests
+│
+├── .env.example                    # Template environment variables
+├── .gitignore                      # Git ignore rules for secrets, venv, and builds
+├── pyproject.toml                  # UV project configuration and Ruff rules
+├── uv.lock                         # UV locked dependency tree
+└── README.md                       # Project documentation
 ```
 
----
+## Requirements
 
-## Setup (Windows)
+- **Python**: `>= 3.10, < 3.14`
+- **UV**: `>= 0.4.0` (Fast Python package and environment manager)
+- **Node.js & npm**: Node `>= 18.0.0`, npm `>= 9.0.0`
+- **Google Gemini API Key**: Free tier or standard key from [Google AI Studio](https://aistudio.google.com/apikey)
 
-### 1. Create and activate a virtual environment
+## Backend Setup
+
+1. Install project dependencies using UV:
 
 ```bash
-cd procurement-rag-mvp
-python -m venv .venv
-.venv\Scripts\activate
+uv sync
 ```
 
-### 2. Install dependencies
+## Environment Setup
 
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Create your `.env` file
-
-Copy the example and add your OpenAI API key:
+1. Copy the example configuration to create your local `.env`:
 
 ```bash
 copy .env.example .env
 ```
 
-Then open `.env` and replace `your_api_key_here` with your real OpenAI API key:
+2. Edit `.env` and provide your Google AI Studio API key:
 
-```
-OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL=gpt-4o-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-```
-
-### 4. Add tender PDFs
-
-Place one or more real tender/RFP PDF files into:
-
-```
-data/tenders/
+```env
+GOOGLE_API_KEY=your_gemini_api_key_here
+GEMINI_CHAT_MODEL=gemini-3.6-flash
+GEMINI_EMBEDDING_MODEL=models/gemini-embedding-001
+CHROMA_DB_DIR=storage/chroma
+FRONTEND_ORIGIN=http://localhost:5173
 ```
 
-### 5. Run document ingestion
+## Run Backend
+
+Start the FastAPI application with auto-reload:
 
 ```bash
-python ingest.py
+uv run uvicorn app.main:app --reload
 ```
 
-You should see output like:
+- **Backend API URL**: `http://127.0.0.1:8000`
+- **Interactive Swagger Docs**: `http://127.0.0.1:8000/docs`
+- **Alternative ReDoc**: `http://127.0.0.1:8000/redoc`
 
-```
-Loading documents...
-Found 2 PDF file(s).
-  Loading: Tender_2026.pdf
-    → 45 page(s) loaded.
-Creating chunks...
-Created 120 chunk(s) from 45 page(s).
-Creating embeddings and saving to Chroma...
-✓ Ingestion completed successfully.
-```
+## Run Frontend
 
-### 6. Start the application
+In a separate terminal, start the React + Vite frontend:
 
 ```bash
-streamlit run app.py
+cd frontend
+npm install
+npm run dev
 ```
 
-The app will open in your browser at `http://localhost:8501`.
+- **Frontend Application URL**: `http://localhost:5173`
 
----
+## Workflow
+
+```
+PDF Document
+     ↓
+Upload to data/tenders/ via POST /api/documents/upload
+     ↓
+Index via POST /api/documents/index
+     ↓
+PyPDFLoader page extraction
+     ↓
+RecursiveCharacterTextSplitter (chunk size: 1000, overlap: 200)
+     ↓
+Google Generative AI Embeddings (with rate-limit backoff)
+     ↓
+ChromaDB persistent store (storage/chroma)
+     ↓
+Query via POST /api/query
+     ↓
+Similarity Search Retriever (top-10 chunks)
+     ↓
+Gemini 3.6 Flash inference with strictly grounded prompt
+     ↓
+Answer + Source Document Citations + Page Numbers
+```
+
+## API Endpoints
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Application health, Gemini configuration, and vector store readiness |
+| `GET` | `/api/documents` | List stored tender PDF documents and metadata |
+| `POST` | `/api/documents/upload` | Upload one or more tender/RFP PDF files |
+| `POST` | `/api/documents/index` | Run the document ingestion and embedding pipeline into ChromaDB |
+| `POST` | `/api/query` | Ask a question and receive grounded answers with citations |
+
+### Example Query Request
+
+```json
+POST /api/query
+Content-Type: application/json
+
+{
+  "question": "According to GeM bid.pdf, what is the minimum average annual turnover required for the bidder?"
+}
+```
+
+### Example Query Response
+
+```json
+{
+  "answer": "According to GeM bid.pdf, the bidder must have a minimum average annual turnover of INR 25 Lakhs across the specified financial years.",
+  "sources": [
+    {
+      "document": "GeM bid.pdf",
+      "page": 6
+    }
+  ],
+  "context": [
+    {
+      "document": "GeM bid.pdf",
+      "page": 6,
+      "content": "Average Annual Turnover of the bidder: Minimum 25 Lakhs..."
+    }
+  ]
+}
+```
 
 ## Example Questions
 
-Try asking:
-
+- According to GeM bid.pdf, what is the minimum average annual turnover required for the bidder?
 - What are the eligibility criteria?
-- What is the submission deadline?
-- What documents are required from the bidder?
-- What minimum experience is required?
-- Is there a minimum annual turnover requirement?
-- What are the evaluation criteria?
-- What is the scope of work?
-- What are the technical requirements?
-
----
+- What is the contract period?
+- What is the bid submission deadline?
+- What is the evaluation method?
 
 ## Testing
 
-### With real tender PDFs
-
-1. Place one or more public tender/RFP PDFs in `data/tenders/`.
-2. Run `python ingest.py` — verify it completes without errors.
-3. Run `streamlit run app.py` — verify the UI loads.
-4. Ask a question whose answer **is** in the document (e.g., "What is the submission deadline?").
-5. Verify the answer references the correct source and page.
-6. Ask a question whose answer is **not** in the document (e.g., "What is the CEO's phone number?").
-7. Verify the system says *"I could not find this information in the provided tender documents"* rather than making something up.
-
-### Quick import check
+Run automated tests using UV and Pytest:
 
 ```bash
-python -c "from config import *; from rag import get_vector_store; print('All imports OK')"
+uv run pytest
 ```
 
----
+## Code Quality
 
-## Technology Stack
+Check and format code using Ruff:
 
-| Component       | Library / Service          |
-| --------------- | -------------------------- |
-| PDF loading     | PyPDFLoader (LangChain)    |
-| Text splitting  | RecursiveCharacterTextSplitter |
-| Embeddings      | OpenAI text-embedding-3-small |
-| Vector store    | ChromaDB                   |
-| LLM             | OpenAI gpt-4o-mini         |
-| RAG framework   | LangChain (LCEL)           |
-| UI              | Streamlit                  |
-| Configuration   | python-dotenv              |
+```bash
+# Check code for lint errors
+uv run ruff check .
 
----
+# Automatically apply fixes
+uv run ruff check --fix .
 
-## Limitations (MVP)
+# Format code
+uv run ruff format .
+```
 
-This is a minimal viable product. It does **not** include:
+## Current Limitations
 
-- Agents or multi-agent systems
-- Hybrid search or reranking
-- Authentication or user accounts
-- Cloud deployment or Docker
-- Vendor proposal comparison
-- Automated procurement decision-making
+- Only document-based Q&A is currently supported (no vendor proposal evaluation or scoring).
+- PDF is the only supported document format.
 
-These can be added as future enhancements.
+## Future Improvements
+
+- Support for comparing multiple vendor bids side-by-side in structured tables.
+- Optical Character Recognition (OCR) integration for scanned or image-only tender PDFs.
+- Export analysis reports to PDF / Excel.

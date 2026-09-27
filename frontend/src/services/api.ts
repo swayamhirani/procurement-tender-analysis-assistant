@@ -6,7 +6,7 @@ import {
   QueryResponse,
 } from '../types';
 
-const API_BASE = ''; // Uses Vite proxy when running dev server, or direct origin
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
